@@ -79,6 +79,8 @@ begin
   select id into v_kardus2  from public.storage_locations where user_id = v_user and name = 'Kardus 2';
 
   -- -------------------------------------------------------------------- buku
+  -- Tiap baris dipasangkan kunci unik (user_id, isbn) lewat ON CONFLICT,
+  -- sehingga menjalankan berkas ini berulang kali tetap aman.
   insert into public.books (
     user_id, title, author, isbn, publisher, publication_year, edition, language,
     category_id, description, page_count, condition, storage_location_id,
@@ -141,7 +143,8 @@ begin
   (v_user, 'Kisah Para Pemikir Indonesia', 'Goenawan Mohamad', '9789794338729', 'Kompas', 2010,
     'Cetakan ke-2', 'Indonesia', v_nonfiksi,
     'Esai tentang gagasan dan tokoh kebudayaan Indonesia.', 268, 'cukup', v_kardus2,
-    'belum_dibaca', 'dimiliki', 4, 'Ada noda kopi di halaman 40.', '2023-10-21');
+    'belum_dibaca', 'dimiliki', 4, 'Ada noda kopi di halaman 40.', '2023-10-21')
+  on conflict (user_id, isbn) do nothing;
 
   -- -------------------------------------------------------------- peminjaman
   select id into v_buku_sapiens from public.books
@@ -159,13 +162,21 @@ begin
   (v_user, v_buku_matematika, 'Pak Darto', null, current_date - 4,
     current_date + 10, null, 'dipinjam', 'Dipakai anaknya.'),
   (v_user, v_buku_laskar, 'Dimas Prasetyo', '0857-1122-3344', current_date - 70,
-    current_date - 50, now() - interval '45 days', 'dikembalikan', 'Dikembalikan lengkap.');
+    current_date - 50, now() - interval '45 days', 'dikembalikan', 'Dikembalikan lengkap.')
+  on conflict do nothing;
 
   -- ------------------------------------------------------ riwayat baca contoh
+  -- Gunakan ON CONFLICT agar seed bisa dijalankan berulang tanpa error
+  -- (reading_logs tidak memiliki constraint unik; saring dulu baris yang sudah ada).
   insert into public.reading_logs (user_id, book_id, status, finished_at)
   select b.user_id, b.id, b.reading_status, b.updated_at
   from public.books b
-  where b.user_id = v_user and b.reading_status = 'sudah_dibaca';
+  where b.user_id = v_user
+    and b.reading_status = 'sudah_dibaca'
+    and not exists (
+      select 1 from public.reading_logs r
+      where r.user_id = b.user_id and r.book_id = b.id
+    );
 
   raise notice 'Data contoh berhasil dibuat untuk pengguna %.', v_user;
 end $$;

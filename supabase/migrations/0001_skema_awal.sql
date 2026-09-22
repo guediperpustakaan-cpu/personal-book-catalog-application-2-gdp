@@ -87,6 +87,9 @@ create index if not exists books_condition_idx        on public.books (user_id, 
 create index if not exists books_rating_idx           on public.books (user_id, rating desc);
 create index if not exists books_year_idx             on public.books (user_id, publication_year);
 
+-- Satu buku dengan ISBN tertentu hanya boleh ada sekali per pengguna.
+create unique index if not exists books_user_isbn_unik on public.books (user_id, isbn);
+
 -- ----------------------------------------------------------------------------
 -- Tabel: loans (peminjaman)
 -- ----------------------------------------------------------------------------
@@ -135,6 +138,8 @@ create index if not exists reading_logs_book_idx on public.reading_logs (book_id
 -- ----------------------------------------------------------------------------
 -- Trigger updated_at otomatis
 -- ----------------------------------------------------------------------------
+-- Catatan: dua trigger dipasang pada loans — before update (updated_at) dan
+-- after insert/update/delete (sinkronisasi status kepemilikan buku di bawah).
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -160,6 +165,54 @@ create trigger storage_locations_updated_at before update on public.storage_loca
 drop trigger if exists loans_updated_at on public.loans;
 create trigger loans_updated_at before update on public.loans
   for each row execute function public.set_updated_at();
+
+-- ----------------------------------------------------------------------------
+-- Sinkronisasi status kepemilikan buku otomatis
+-- ----------------------------------------------------------------------------
+-- Saat sebuah peminjaman aktif (status = 'dipinjam'), buku terkait ditandai
+-- 'dipinjamkan'. Saat dikembalikan, kembali ke 'dimiliki'. Logika ini disimpan
+-- di database agar semua klien (frontend, impor, script) selalu konsisten.
+create or replace function public.sinkron_kepemilikan_buku()
+returns trigger
+language plpgsql
+as $$
+begin
+  -- Peminjaman baru atau perubahan ke status dipinjam
+  if (tg_op = 'INSERT' and new.status = 'dipinjam')
+     or (tg_op = 'UPDATE' and new.status = 'dipinjam' and old.status <> 'dipinjam') then
+    update public.books
+      set ownership_status = 'dipinjamkan'
+      where id = new.book_id;
+  -- Pengembalian
+  elsif (tg_op = 'UPDATE' and new.status = 'dikembalikan' and old.status <> 'dikembalikan') then
+    update public.books
+      set ownership_status = 'dimiliki'
+      where id = new.book_id
+        and ownership_status = 'dipinjamkan';
+  end if;
+
+  -- Hanya kembalikan ke 'dimiliki' bila tidak ada peminjaman aktif lain.
+  if tg_op = 'DELETE' and old.status = 'dipinjam' then
+    if not exists (
+      select 1 from public.loans l
+      where l.book_id = old.book_id and l.status = 'dipinjam'
+    ) then
+      update public.books
+        set ownership_status = 'dimiliki'
+        where id = old.book_id
+          and ownership_status = 'dipinjamkan';
+    end if;
+  end if;
+
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists loans_sinkron_kepemilikan on public.loans;
+create trigger loans_sinkron_kepemilikan
+  after insert or update or delete on public.loans
+  for each row execute function public.sinkron_kepemilikan_buku();
 
 -- ----------------------------------------------------------------------------
 -- Row Level Security: setiap pengguna hanya boleh mengelola datanya sendiri

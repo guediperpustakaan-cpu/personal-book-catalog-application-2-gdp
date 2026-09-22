@@ -1,0 +1,32 @@
+# Dependensi
+node_modules
+
+# Hasil build
+dist
+dist-ssr
+.vite
+*.local
+
+# Variabel lingkungan (jangan pernah di-commit)
+.env
+.env.*
+!.env.example
+
+# Berkas sementara & editor
+.DS_Store
+*.log
+npm-debug.log*
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Folder kerja Kilo/Agent Manager
+.kilo
+
+# Supabase CLI
+supabase/.temp
+supabase/.branches
